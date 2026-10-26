@@ -6,12 +6,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: unzip -q VirtualGSI.zip
-      - uses: actions/setup-java@v4
+      - run: |
+          printf 'android.useAndroidX=true\nandroid.nonTransitiveRClass=true\norg.gradle.jvmargs=-Xmx3g\n' > VirtualGSI/gradle.properties
+      - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: 17 }
       - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: 8.9 }
-      - run: gradle -p VirtualGSI :app:assembleDebug
+      - run: gradle -p VirtualGSI :app:assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: VirtualGSI-apk
