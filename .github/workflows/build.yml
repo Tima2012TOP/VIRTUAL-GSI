@@ -1,15 +1,66 @@
 name: Build APK
 on: [push, workflow_dispatch]
 jobs:
-  build:
+  qemu:
+    # arm64-раннер: бесплатен для публичных репозиториев
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/cache@v4
+        id: c
+        with:
+          path: out
+          key: qemu-9.1.0-static-v1
+      - name: Build static QEMU (Alpine, musl)
+        if: steps.c.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p out
+          cat > build-qemu.sh <<'EOS'
+          set -x
+          for p in build-base bash git python3 py3-setuptools py3-pip meson ninja pkgconf flex bison perl wget xz linux-headers \
+            glib-dev glib-static pixman-dev pixman-static zlib-dev zlib-static libffi-dev pcre2-dev musl-libintl \
+            libslirp-dev libslirp-static gettext-dev gettext-static util-linux-dev util-linux-static; do
+            apk add --no-cache $p || echo "SKIP $p"
+          done
+          set -e
+          cd /tmp
+          wget -q https://download.qemu.org/qemu-9.1.0.tar.xz
+          tar xf qemu-9.1.0.tar.xz
+          cd qemu-9.1.0
+          COMMON="--static --target-list=aarch64-softmmu,x86_64-softmmu --disable-werror --disable-docs --disable-tools --disable-guest-agent --disable-gtk --disable-sdl --disable-curses --disable-opengl --disable-gnutls --disable-nettle --disable-gcrypt --disable-libssh --disable-brlapi --disable-snappy --disable-lzo --disable-bzip2 --disable-zstd"
+          ./configure $COMMON --enable-slirp || { rm -rf build; ./configure $COMMON --disable-slirp; }
+          make -j$(nproc)
+          mkdir -p /w/out/bios
+          strip build/qemu-system-aarch64 build/qemu-system-x86_64
+          cp build/qemu-system-aarch64 /w/out/libqemu_aarch64.so
+          cp build/qemu-system-x86_64 /w/out/libqemu_x86_64.so
+          for f in bios-256k.bin bios.bin linuxboot_dma.bin linuxboot.bin kvmvapic.bin efi-virtio.rom vgabios.bin vgabios-stdvga.bin vgabios-virtio.bin; do
+            cp pc-bios/$f /w/out/bios/ 2>/dev/null || true
+          done
+          chmod -R a+rX /w/out
+          EOS
+          docker run --rm -v "$PWD:/w" alpine:3.20 sh /w/build-qemu.sh
+          ls -lh out out/bios
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qemu
+          path: out
+
+  apk:
+    needs: qemu
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: qemu
+          path: qemu-out
       - run: |
           unzip -q VirtualGSI.zip
           printf 'android.useAndroidX=true\nandroid.nonTransitiveRClass=true\norg.gradle.jvmargs=-Xmx3g\n' > VirtualGSI/gradle.properties
-          mkdir -p VirtualGSI/app/src/main/jniLibs/arm64-v8a
-          cp jniLibs/*.so VirtualGSI/app/src/main/jniLibs/arm64-v8a/ || true
+          mkdir -p VirtualGSI/app/src/main/jniLibs/arm64-v8a VirtualGSI/app/src/main/assets/qemu-bios
+          cp qemu-out/libqemu_*.so VirtualGSI/app/src/main/jniLibs/arm64-v8a/
+          cp qemu-out/bios/* VirtualGSI/app/src/main/assets/qemu-bios/ || true
       - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: 17 }
       - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
