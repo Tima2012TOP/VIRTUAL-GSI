@@ -5,9 +5,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: unzip -q VirtualGSI.zip
       - run: |
+          unzip -q VirtualGSI.zip
           printf 'android.useAndroidX=true\nandroid.nonTransitiveRClass=true\norg.gradle.jvmargs=-Xmx3g\n' > VirtualGSI/gradle.properties
+          mkdir -p VirtualGSI/app/src/main/jniLibs/arm64-v8a
+          cp jniLibs/*.so VirtualGSI/app/src/main/jniLibs/arm64-v8a/ || true
       - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: 17 }
       - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
